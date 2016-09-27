@@ -1,12 +1,13 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <omp.h>
 
-#include "math-toolkit.h"
+#include "math-toolkit-unrolling.h"
 #include "primitives.h"
 #include "raytracing.h"
 #include "idx_stack.h"
 
-#define MAX_REFLECTION_BOUNCES  3
+#define MAX_REFLECTION_BOUNCES	3
 #define MAX_DISTANCE 1000000000000.0
 #define MIN_DISTANCE 0.00001
 #define SAMPLES 4
@@ -467,34 +468,47 @@ void raytracing(uint8_t *pixels, color background_color,
     idx_stack stk;
 
     int factor = sqrt(SAMPLES);
-    for (int j = 0; j < height; j++) {
-        for (int i = 0; i < width; i++) {
-            double r = 0, g = 0, b = 0;
-            /* MSAA */
-            for (int s = 0; s < SAMPLES; s++) {
-                idx_stack_init(&stk);
-                rayConstruction(d, u, v, w,
-                                i * factor + s / factor,
-                                j * factor + s % factor,
-                                view,
-                                width * factor, height * factor);
-                if (ray_color(view->vrp, 0.0, d, &stk, rectangulars, spheres,
-                              lights, object_color,
-                              MAX_REFLECTION_BOUNCES)) {
-                    r += object_color[0];
-                    g += object_color[1];
-                    b += object_color[2];
-                } else {
-                    r += background_color[0];
-                    g += background_color[1];
-                    b += background_color[2];
-                }
-                pixels[((i + (j * width)) * 3) + 0] = r * 255 / SAMPLES;
-                pixels[((i + (j * width)) * 3) + 1] = g * 255 / SAMPLES;
-                pixels[((i + (j * width)) * 3) + 2] = b * 255 / SAMPLES;
-            }
-        }
+
+    double r[height][width],g[height][width],b[height][width];
+
+    for(int n=0; n<height*width; n++) {
+        int i=n/width;
+        int j=n%height;
+        r[i][j]=0;
+        g[i][j]=0;
+        b[i][j]=0;
     }
+
+    #pragma omp parallel for private(stk), private(d),private(object_color)
+    for (int n = 0; n < height*width*SAMPLES; n++) {
+        /* MSAA */
+
+        int i=n/(width*SAMPLES);
+        int j=(n/SAMPLES)%width;
+        int s=n%SAMPLES;
+        idx_stack_init(&stk);
+        rayConstruction(d, u, v, w,
+                        i * factor + s / factor,
+                        j * factor + s % factor,
+                        view,
+                        width * factor, height * factor);
+        if (ray_color(view->vrp, 0.0, d, &stk, rectangulars, spheres,
+                      lights, object_color,
+                      MAX_REFLECTION_BOUNCES)) {
+            r[i][j] += object_color[0];
+            g[i][j] += object_color[1];
+            b[i][j] += object_color[2];
+        } else {
+            r[i][j] += background_color[0];
+            g[i][j] += background_color[1];
+            b[i][j] += background_color[2];
+        }
+
+
+        pixels[((i + (j * width)) * 3) + 0] = r[i][j] * 255 / SAMPLES;
+        pixels[((i + (j * width)) * 3) + 1] = g[i][j] * 255 / SAMPLES;
+        pixels[((i + (j * width)) * 3) + 2] = b[i][j] * 255 / SAMPLES;
+
+    }
+
 }
-
-
